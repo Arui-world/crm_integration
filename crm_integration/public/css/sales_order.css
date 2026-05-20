@@ -1,0 +1,30 @@
+/* 为CRM操作分组按钮设置黑色背景样式 */
+.page-head .btn-group > button:nth-child(n):contains("CRM操作"),
+.btn-group button[data-label="CRM操作"],
+.btn-group > .btn:nth-child(n) {
+	/* 这个选择器用来定位CRM操作按钮 */
+}
+
+/* 通过属性选择器和文本匹配来定位按钮 */
+button[title*="CRM操作"],
+.btn-group > button {
+	/* 检查按钮文本 */
+}
+
+/* 通用方式：为所有自定义按钮分组提供样式，然后通过JS设置特定按钮 */
+.page-head .btn-group .btn-group-primary {
+	background-color: #1f2937 !important;
+	border-color: #1f2937 !important;
+	color: #ffffff !important;
+}
+
+/* 更直接的方式 - 为所有 button 元素设置规则 */
+.page-head button {
+	transition: background-color 0.2s ease;
+}
+
+/* 当按钮包含特定文本时应用样式 */
+.page-head .btn-group button[data-original-title="CRM操作"],
+.page-head .dropdown-toggle {
+	/* 将由JS补充 */
+}
