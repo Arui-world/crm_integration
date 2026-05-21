@@ -348,20 +348,25 @@ function reconcile_final_payment(frm) {
 }
 
 function confirm_deposit_and_push_to_mes(frm) {
-	frappe.call({
-		method: "crm_integration.crm_integration.sales_order.confirm_deposit_and_push_to_mes",
-		args: {
-			sales_order_name: frm.doc.name
-		},
-		freeze: true,
-		freeze_message: __("正在确认定金并推送至MES..."),
-		callback: function(r) {
-			if (r.message && r.message.status === "success") {
-				frappe.show_alert({ message: r.message.message, indicator: "green" });
-				frm.reload_doc();
-			}
+	frappe.confirm(
+		__("确认定金已到账，并将此销售订单推送至MES开始生产？"),
+		function() {
+			frappe.call({
+				method: "crm_integration.crm_integration.sales_order.confirm_deposit_and_push_to_mes",
+				args: {
+					sales_order_name: frm.doc.name
+				},
+				freeze: true,
+				freeze_message: __("正在确认定金并推送至MES..."),
+				callback: function(r) {
+					if (r.message && r.message.status === "success") {
+						frappe.show_alert({ message: r.message.message, indicator: "green" });
+						frm.reload_doc();
+					}
+				}
+			});
 		}
-	});
+	);
 }
 
 
