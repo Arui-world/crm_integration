@@ -14,7 +14,8 @@ frappe.listview_settings["Sales Order"].formatters = {
 			"Rejected": "red",
 			"Pending Deposit Confirmation": "yellow",
 			"Pending Production": "blue",
-			"Pending Delivery": "blue",
+			"Pending Final Payment": "yellow",
+			"Deliverable": "blue",
 			"Completed": "green",
 		};
 

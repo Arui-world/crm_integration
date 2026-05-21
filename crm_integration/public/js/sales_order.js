@@ -1,16 +1,26 @@
 // Sales Order production flow actions
 frappe.ui.form.on("Sales Order", {
 	onload: function(frm) {
+		install_work_order_creation_guard(frm);
+		install_production_plan_creation_guard(frm);
+		install_delivery_note_creation_guard(frm);
+		install_sales_invoice_source_tracker(frm);
 		add_production_flow_buttons(frm);
 		display_process_status(frm);
 		render_payment_entry_link_in_details(frm);
+		restrict_fulfillment_creation(frm);
 	},
 
 	refresh: function(frm) {
 		hide_submit_for_rejected_sales_order(frm);
+		install_work_order_creation_guard(frm);
+		install_production_plan_creation_guard(frm);
+		install_delivery_note_creation_guard(frm);
+		install_sales_invoice_source_tracker(frm);
 		add_production_flow_buttons(frm);
 		display_process_status(frm);
 		render_payment_entry_link_in_details(frm);
+		restrict_fulfillment_creation(frm);
 	},
 
 	dashboard_update: function(frm) {
@@ -48,6 +58,162 @@ function hide_submit_for_rejected_sales_order(frm) {
 	setTimeout(clear_submit, 300);
 }
 
+function install_sales_invoice_source_tracker(frm) {
+	if (!frm || !frm.cscript || frm._crm_sales_invoice_source_tracker_installed) {
+		return;
+	}
+
+	const original_make_sales_invoice = frm.cscript.make_sales_invoice;
+	if (typeof original_make_sales_invoice !== "function") {
+		return;
+	}
+
+	frm._crm_sales_invoice_source_tracker_installed = true;
+	frm.cscript.make_sales_invoice = function() {
+		remember_sales_invoice_source_sales_order(frm);
+		return original_make_sales_invoice.apply(this, arguments);
+	};
+}
+
+function remember_sales_invoice_source_sales_order(frm, sales_invoice_name) {
+	if (!window.sessionStorage || !frm || !frm.doc || !frm.doc.name) {
+		return;
+	}
+
+	sessionStorage.setItem(
+		"crm_integration_sales_invoice_source",
+		JSON.stringify({
+			sales_invoice: sales_invoice_name || null,
+			sales_order: frm.doc.name
+		})
+	);
+}
+
+function install_work_order_creation_guard(frm) {
+	if (!frm || !frm.cscript || frm._crm_work_order_guard_installed) {
+		return;
+	}
+
+	const original_make_work_order = frm.cscript.make_work_order;
+	if (typeof original_make_work_order !== "function") {
+		return;
+	}
+
+	frm._crm_work_order_guard_installed = true;
+	frm.cscript.make_work_order = function() {
+		if (frm.doc.custom_process_status !== "Pending Production") {
+			frappe.msgprint({
+				title: __("无法创建工单"),
+				indicator: "orange",
+				message: __("只有流程状态为 Pending Production 的销售订单才可以创建工单。")
+			});
+			return;
+		}
+
+		return original_make_work_order.apply(this, arguments);
+	};
+}
+
+function install_production_plan_creation_guard(frm) {
+	if (!frm || !frm.cscript || frm._crm_production_plan_guard_installed) {
+		return;
+	}
+
+	const original_make_production_plan = frm.cscript.make_production_plan;
+	if (typeof original_make_production_plan !== "function") {
+		return;
+	}
+
+	frm._crm_production_plan_guard_installed = true;
+	frm.cscript.make_production_plan = function() {
+		if (!can_create_production_document(frm)) {
+			show_production_block_message(__("无法创建生产计划"));
+			return;
+		}
+
+		return original_make_production_plan.apply(this, arguments);
+	};
+}
+
+function install_delivery_note_creation_guard(frm) {
+	if (!frm || !frm.cscript || frm._crm_delivery_note_guard_installed) {
+		return;
+	}
+
+	const original_make_delivery_note_based_on_delivery_date =
+		frm.cscript.make_delivery_note_based_on_delivery_date;
+	const original_make_delivery_note = frm.cscript.make_delivery_note;
+
+	if (typeof original_make_delivery_note_based_on_delivery_date === "function") {
+		frm.cscript.make_delivery_note_based_on_delivery_date = function() {
+			if (!can_create_delivery_note(frm)) {
+				show_delivery_note_block_message();
+				return;
+			}
+
+			return original_make_delivery_note_based_on_delivery_date.apply(this, arguments);
+		};
+	}
+
+	if (typeof original_make_delivery_note === "function") {
+		frm.cscript.make_delivery_note = function() {
+			if (!can_create_delivery_note(frm)) {
+				show_delivery_note_block_message();
+				return;
+			}
+
+			return original_make_delivery_note.apply(this, arguments);
+		};
+	}
+
+	frm._crm_delivery_note_guard_installed = true;
+}
+
+function restrict_fulfillment_creation(frm) {
+	if (!frm || !frm.doc) {
+		return;
+	}
+
+	const remove_buttons = function() {
+		if (frm.doc.custom_process_status !== "Pending Production") {
+			frm.remove_custom_button(__("Work Order"), __("Create"));
+			frm.remove_custom_button(__("Production Plan"), __("Create"));
+		}
+
+		if (!can_create_delivery_note(frm)) {
+			frm.remove_custom_button(__("Delivery Note"), __("Create"));
+		}
+	};
+
+	remove_buttons();
+	requestAnimationFrame(remove_buttons);
+	setTimeout(remove_buttons, 300);
+}
+
+function can_create_production_document(frm) {
+	return frm.doc.custom_process_status === "Pending Production";
+}
+
+function show_production_block_message(title) {
+	frappe.msgprint({
+		title: title,
+		indicator: "orange",
+		message: __("只有流程状态为 Pending Production 的销售订单才可以创建生产计划或工单。")
+	});
+}
+
+function can_create_delivery_note(frm) {
+	return frm.doc.custom_process_status === "Deliverable";
+}
+
+function show_delivery_note_block_message() {
+	frappe.msgprint({
+		title: __("无法创建销售出库"),
+		indicator: "orange",
+		message: __("只有流程状态为 Deliverable 的销售订单才可以创建销售出库。")
+	});
+}
+
 function add_production_flow_buttons(frm) {
 	if (!frm || !frm.doc || frm.doc.__islocal) {
 		return;
@@ -67,6 +233,13 @@ function add_production_flow_buttons(frm) {
 			confirm_deposit_and_push_to_mes(frm);
 		});
 		apply_primary_action_style("确认定金并推送至MES");
+	}
+
+	if (frm.doc.docstatus === 1 && process_status === "Pending Final Payment") {
+		frm.add_custom_button(__("核销尾款"), function() {
+			reconcile_final_payment(frm);
+		});
+		apply_primary_action_style("核销尾款");
 	}
 }
 
@@ -116,7 +289,8 @@ function get_process_status_color(process_status) {
 		"Rejected": "red",
 		"Pending Deposit Confirmation": "yellow",
 		"Pending Production": "blue",
-		"Pending Delivery": "blue",
+		"Pending Final Payment": "yellow",
+		"Deliverable": "blue",
 		"Completed": "green"
 	};
 
@@ -143,6 +317,34 @@ function reject_sales_order(frm) {
 			});
 		}
 	);
+}
+
+function reconcile_final_payment(frm) {
+	frappe.call({
+		method: "crm_integration.crm_integration.sales_order.reconcile_final_payment",
+		args: {
+			sales_order_name: frm.doc.name
+		},
+		freeze: true,
+		freeze_message: __("正在核销尾款..."),
+		callback: function(r) {
+			if (!r.message) {
+				return;
+			}
+
+			if (r.message.status === "success") {
+				frappe.show_alert({ message: r.message.message, indicator: "green" });
+				frm.reload_doc();
+				return;
+			}
+
+			frappe.msgprint({
+				title: __("尾款核销失败"),
+				indicator: "red",
+				message: r.message.message || __("预付款小于总计，不能放行发货。")
+			});
+		}
+	});
 }
 
 function confirm_deposit_and_push_to_mes(frm) {

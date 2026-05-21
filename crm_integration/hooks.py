@@ -32,8 +32,15 @@ app_license = "mit"
 doctype_js = {
 	"Sales Order": "public/js/sales_order.js",
 	"Payment Entry": "public/js/payment_entry.js",
+	"Sales Invoice": "public/js/sales_invoice.js",
+	"Work Order": "public/js/work_order.js",
+	"Production Plan": "public/js/production_plan.js",
+	"Delivery Note": "public/js/delivery_note.js",
 }
-doctype_list_js = {"Sales Order": "public/js/sales_order_list.js"}
+doctype_list_js = {
+	"Sales Order": "public/js/sales_order_list.js",
+	"Payment Entry": "public/js/payment_entry_list.js",
+}
 doctype_css = {"Sales Order": "public/css/sales_order.css"}
 
 # include js, css files in header of web template
@@ -150,7 +157,17 @@ doc_events = {
 	"Sales Order": {
 		"before_submit": "crm_integration.crm_integration.sales_order.prevent_rejected_sales_order_submit",
 		"on_submit": "crm_integration.crm_integration.sales_order.set_pending_deposit_confirmation_on_submit",
-	}
+	},
+	"Work Order": {
+		"validate": "crm_integration.crm_integration.work_order.validate_sales_order_process_status",
+	},
+	"Production Plan": {
+		"validate": "crm_integration.crm_integration.production_plan.validate_sales_order_process_status",
+	},
+	"Delivery Note": {
+		"validate": "crm_integration.crm_integration.delivery_note.validate_sales_order_process_status",
+		"on_submit": "crm_integration.crm_integration.delivery_note.mark_sales_orders_completed_on_submit",
+	},
 }
 
 # Scheduled Tasks
@@ -190,9 +207,11 @@ doc_events = {
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "crm_integration.event.get_events"
-# }
+override_whitelisted_methods = {
+	"erpnext.manufacturing.doctype.work_order.work_order.query_sales_order": "crm_integration.crm_integration.work_order.query_sales_order",
+	"erpnext.manufacturing.doctype.production_plan.production_plan.sales_order_query": "crm_integration.crm_integration.production_plan.sales_order_query",
+	"erpnext.selling.doctype.sales_order.sales_order.make_production_plan": "crm_integration.crm_integration.production_plan.make_production_plan",
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
