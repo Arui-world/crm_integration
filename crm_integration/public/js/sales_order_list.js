@@ -2,15 +2,22 @@ frappe.listview_settings["Sales Order"] = frappe.listview_settings["Sales Order"
 
 frappe.listview_settings["Sales Order"].add_fields = [
 	...(frappe.listview_settings["Sales Order"].add_fields || []),
-	"`tabSales Order`.`custom_crm_status`",
+	"`tabSales Order`.`custom_process_status`",
 ];
 
 frappe.listview_settings["Sales Order"].formatters = {
 	...(frappe.listview_settings["Sales Order"].formatters || {}),
-	custom_crm_status: function(value) {
-		const status = value || "Unpushed";
-		const color = status === "Pushed" ? "blue" : "red";
+	custom_process_status: function(value) {
+		const status = value || "Pending Confirmation";
+		const colors = {
+			"Pending Confirmation": "orange",
+			"Rejected": "red",
+			"Pending Deposit Confirmation": "yellow",
+			"Pending Production": "blue",
+			"Pending Delivery": "blue",
+			"Completed": "green",
+		};
 
-		return `<span class="indicator-pill ${color} no-indicator-dot">${__(status)}</span>`;
+		return `<span class="indicator-pill ${colors[status] || "gray"} no-indicator-dot">${__(status)}</span>`;
 	},
 };

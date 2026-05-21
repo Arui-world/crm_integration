@@ -1,58 +1,78 @@
 import frappe
+from frappe import _
 from frappe.utils import now
 
 
+PENDING_CONFIRMATION = "Pending Confirmation"
+REJECTED = "Rejected"
+PENDING_DEPOSIT_CONFIRMATION = "Pending Deposit Confirmation"
+PENDING_PRODUCTION = "Pending Production"
+
+
+def set_process_status(sales_order, process_status, status=None):
+	"""Update process status without running the full Sales Order save cycle."""
+	sales_order.db_set("custom_process_status", process_status, update_modified=True)
+	if status:
+		sales_order.db_set("status", status, update_modified=True)
+	sales_order.notify_update()
+
+
 @frappe.whitelist()
-def push_to_crm(sales_order_name):
-	"""
-	推送销售订单到 CRM 系统
-	"""
-	# 获取销售订单
+def reject_sales_order(sales_order_name):
+	"""Reject a CRM-created Sales Order while it is waiting for ERP confirmation."""
 	sales_order = frappe.get_doc("Sales Order", sales_order_name)
-	
-	# 验证销售订单是否已提交
-	if sales_order.docstatus != 1:
-		frappe.throw(frappe._("销售订单必须已提交才能推送到 CRM"))
-	
-	# 检查是否已经推送
-	if sales_order.get("custom_crm_status") == "Pushed":
-		frappe.throw(frappe._("此销售订单已推送至 CRM，无需重复推送"))
-	
-	# 这里是将销售订单推送至 CRM 的业务逻辑
-	# 目前只是模拟推送成功
-	frappe.logger().info(f"推送销售订单 {sales_order_name} 到 CRM")
-	
-	# 更新 CRM Status 为已推送
-	sales_order.db_set("custom_crm_status", "Pushed")
-	
+
+	if sales_order.docstatus != 0:
+		frappe.throw(_("只有草稿销售订单可以驳回。"))
+
+	if sales_order.get("custom_process_status") != PENDING_CONFIRMATION:
+		frappe.throw(_("只有待确认的销售订单可以驳回。"))
+
+	set_process_status(sales_order, REJECTED, status="Cancelled")
+	frappe.logger().info(f"Sales Order {sales_order_name} rejected from production flow")
+
 	return {
 		"status": "success",
-		"message": f"销售订单 {sales_order_name} 已成功推送到 CRM",
-		"crm_status": "Pushed",
-		"timestamp": now()
+		"message": _("销售订单已驳回。"),
+		"process_status": REJECTED,
+		"timestamp": now(),
 	}
 
 
+def set_pending_deposit_confirmation_on_submit(doc, method=None):
+	"""Move the production flow forward after the native ERPNext submit succeeds."""
+	if doc.get("custom_process_status") == REJECTED:
+		return
+
+	doc.db_set("custom_process_status", PENDING_DEPOSIT_CONFIRMATION, update_modified=True)
+	doc.custom_process_status = PENDING_DEPOSIT_CONFIRMATION
+	doc.notify_update()
+
+
+def prevent_rejected_sales_order_submit(doc, method=None):
+	"""Rejected CRM/MES flow orders must not be submitted later."""
+	if doc.get("custom_process_status") == REJECTED:
+		frappe.throw(_("已驳回的销售订单不能提交。"))
+
+
 @frappe.whitelist()
-def reset_crm_status(sales_order_name):
-	"""
-	重置销售订单的 CRM Status 为 Unpushed（当已推送的订单被修改时）
-	"""
-	# 获取销售订单
+def confirm_deposit_and_push_to_mes(sales_order_name):
+	"""Simulate deposit confirmation and MES push for now."""
 	sales_order = frappe.get_doc("Sales Order", sales_order_name)
-	
-	# 只重置已推送的订单
-	if sales_order.get("custom_crm_status") == "Pushed":
-		sales_order.db_set("custom_crm_status", "Unpushed")
-		frappe.logger().info(f"销售订单 {sales_order_name} 已修改，CRM 状态重置为 Unpushed")
-		
-		return {
-			"status": "success",
-			"message": f"销售订单 {sales_order_name} 的 CRM 状态已重置为未推送",
-			"crm_status": "Unpushed"
-		}
-	
+
+	if sales_order.docstatus != 1:
+		frappe.throw(_("销售订单必须提交后才能确认定金。"))
+
+	if sales_order.get("custom_process_status") != PENDING_DEPOSIT_CONFIRMATION:
+		frappe.throw(_("只有待确认定金的销售订单可以推送至MES。"))
+
+	# MES push is simulated as successful for now.
+	frappe.logger().info(f"Simulated MES push for Sales Order {sales_order_name}")
+	set_process_status(sales_order, PENDING_PRODUCTION)
+
 	return {
-		"status": "skipped",
-		"message": "无需重置"
+		"status": "success",
+		"message": _("定金已确认，销售订单已推送至MES。"),
+		"process_status": PENDING_PRODUCTION,
+		"timestamp": now(),
 	}

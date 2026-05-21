@@ -29,7 +29,10 @@ app_license = "mit"
 # app_include_js = "/assets/crm_integration/js/crm_integration.js"
 
 # include js in doctype views
-doctype_js = {"Sales Order": "public/js/sales_order.js"}
+doctype_js = {
+	"Sales Order": "public/js/sales_order.js",
+	"Payment Entry": "public/js/payment_entry.js",
+}
 doctype_list_js = {"Sales Order": "public/js/sales_order_list.js"}
 doctype_css = {"Sales Order": "public/css/sales_order.css"}
 
@@ -143,13 +146,12 @@ doctype_css = {"Sales Order": "public/css/sales_order.css"}
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Sales Order": {
+		"before_submit": "crm_integration.crm_integration.sales_order.prevent_rejected_sales_order_submit",
+		"on_submit": "crm_integration.crm_integration.sales_order.set_pending_deposit_confirmation_on_submit",
+	}
+}
 
 # Scheduled Tasks
 # ---------------

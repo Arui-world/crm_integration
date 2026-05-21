@@ -1,164 +1,404 @@
-// 为销售订单表单添加"推送至CRM"按钮
+// Sales Order production flow actions
 frappe.ui.form.on("Sales Order", {
 	onload: function(frm) {
-		// 在表单加载时添加按钮
-		add_push_to_crm_button(frm);
-		// 显示 CRM Status
-		display_crm_status(frm);
+		add_production_flow_buttons(frm);
+		display_process_status(frm);
+		render_payment_entry_link_in_details(frm);
 	},
-	
+
 	refresh: function(frm) {
-		// 在表单刷新时更新按钮状态
-		add_push_to_crm_button(frm);
-		// 显示 CRM Status
-		display_crm_status(frm);
+		hide_submit_for_rejected_sales_order(frm);
+		add_production_flow_buttons(frm);
+		display_process_status(frm);
+		render_payment_entry_link_in_details(frm);
 	},
-	
-	after_save: function(frm) {
-		// 保存成功后，如果是已推送状态，重置为未推送
-		if (frm.doc.custom_crm_status === "Pushed") {
+
+	dashboard_update: function(frm) {
+		refresh_payment_entry_link_count(frm);
+	},
+
+	after_submit: function(frm) {
+		frm.reload_doc();
+	}
+});
+
+$(document).ready(function() {
+	$(".process-status-badge").remove();
+});
+
+$(document).on("page-change", function() {
+	$(".process-status-badge").remove();
+});
+
+function hide_submit_for_rejected_sales_order(frm) {
+	if (!frm || !frm.doc || frm.doc.custom_process_status !== "Rejected") {
+		return;
+	}
+
+	const clear_submit = function() {
+		if (frm.page && frm.page.clear_primary_action) {
+			frm.page.clear_primary_action();
+		}
+		$(".page-actions .primary-action[data-label='" + encodeURIComponent(__("Submit")) + "']").addClass("hide");
+		$(".page-actions .primary-action[data-label='" + encodeURIComponent("提交") + "']").addClass("hide");
+	};
+
+	clear_submit();
+	requestAnimationFrame(clear_submit);
+	setTimeout(clear_submit, 300);
+}
+
+function add_production_flow_buttons(frm) {
+	if (!frm || !frm.doc || frm.doc.__islocal) {
+		return;
+	}
+
+	const process_status = frm.doc.custom_process_status;
+
+	if (frm.doc.docstatus === 0 && process_status === "Pending Confirmation") {
+		frm.add_custom_button(__("驳回"), function() {
+			reject_sales_order(frm);
+		});
+		apply_primary_action_style("驳回");
+	}
+
+	if (frm.doc.docstatus === 1 && process_status === "Pending Deposit Confirmation") {
+		frm.add_custom_button(__("确认定金并推送至MES"), function() {
+			confirm_deposit_and_push_to_mes(frm);
+		});
+		apply_primary_action_style("确认定金并推送至MES");
+	}
+}
+
+function apply_primary_action_style(label) {
+	requestAnimationFrame(function() {
+		const encoded_label = encodeURIComponent(label);
+		const $button = $(`.page-actions button[data-label="${encoded_label}"]`);
+
+		$button
+			.removeClass("btn-default btn-secondary btn-xs")
+			.addClass("btn-primary btn-sm primary-action");
+	});
+}
+
+function display_process_status(frm) {
+	const currentUrl = window.location.pathname;
+	if (!currentUrl || currentUrl === "/desk/sales-order") {
+		$(".process-status-badge").remove();
+		return;
+	}
+
+	if (!frm || frm.doctype !== "Sales Order" || !frm.doc || !frm.doc.name) {
+		return;
+	}
+
+	const $pageTitle = $(".page-title");
+	if (!$pageTitle.length) {
+		return;
+	}
+
+	$(".process-status-badge").remove();
+
+	const process_status = frm.doc.custom_process_status || "Pending Confirmation";
+	const color = get_process_status_color(process_status);
+	const statusHtml = `<span class="process-status-badge indicator-pill no-indicator-dot whitespace-nowrap ${color}" style="margin-left: 12px;"><span>${__(process_status)}</span></span>`;
+
+	const $pageHead = $(".page-head");
+	if ($pageHead.length) {
+		const $target = $pageHead.find(".page-title").length ? $pageHead.find(".page-title") : $pageHead;
+		$target.append(statusHtml);
+	}
+}
+
+function get_process_status_color(process_status) {
+	const color_map = {
+		"Pending Confirmation": "orange",
+		"Rejected": "red",
+		"Pending Deposit Confirmation": "yellow",
+		"Pending Production": "blue",
+		"Pending Delivery": "blue",
+		"Completed": "green"
+	};
+
+	return color_map[process_status] || "gray";
+}
+
+function reject_sales_order(frm) {
+	frappe.confirm(
+		__("确认驳回此销售订单？"),
+		function() {
 			frappe.call({
-				method: "crm_integration.crm_integration.sales_order.reset_crm_status",
+				method: "crm_integration.crm_integration.sales_order.reject_sales_order",
 				args: {
 					sales_order_name: frm.doc.name
 				},
-				freeze: false,
+				freeze: true,
+				freeze_message: __("正在驳回销售订单..."),
 				callback: function(r) {
 					if (r.message && r.message.status === "success") {
+						frappe.show_alert({ message: r.message.message, indicator: "green" });
 						frm.reload_doc();
 					}
 				}
 			});
 		}
-	}
-});
-
-// 页面加载时先移除所有旧的 CRM Status 标签
-$(document).ready(function() {
-	$('.crm-status-badge').remove();
-});
-
-// 监听 Frappe 页面变化（适用于 SPA 架构）
-$(document).on('page-change', function() {
-	// 每次页面变化时都清理旧的标签
-	$('.crm-status-badge').remove();
-});
-
-function display_crm_status(frm) {
-	// 通过 URL 判断当前页面是否是销售订单表单
-	var currentUrl = window.location.pathname;
-	
-	// 列表页: /desk/sales-order（后面没有斜杠和参数）
-	// 表单页: /desk/sales-order/SAL-ORD-xxx 或 /desk/sales-order/SAL-ORD-xxx/edit
-	if (!currentUrl || currentUrl === '/desk/sales-order') {
-		$('.crm-status-badge').remove();
-		return;
-	}
-	
-	// 验证当前页面是否是销售订单表单
-	if (!frm || frm.doctype !== 'Sales Order' || !frm.doc || !frm.doc.name) {
-		return;
-	}
-	
-	// 验证页面是否有标题栏
-	var $pageTitle = $('.page-title');
-	if (!$pageTitle.length) {
-		return;
-	}
-	
-	// 获取 CRM Status 字段的值
-	var crmStatus = frm.doc.custom_crm_status || "Unpushed";
-	
-	// 先移除已有的所有 CRM Status 标签
-	$('.crm-status-badge').remove();
-	
-	// 构建状态标签的 HTML（使用 Frappe 原生的 indicator-pill 组件）
-	var statusHtml = '';
-	
-	if (crmStatus === "Pushed") {
-		// 已推送状态 - 蓝色
-		statusHtml = '<span class="crm-status-badge indicator-pill no-indicator-dot whitespace-nowrap blue" style="margin-left: 12px;"><span>CRM: 已推送</span></span>';
-	} else {
-		// 未推送状态 - 红色
-		statusHtml = '<span class="crm-status-badge indicator-pill no-indicator-dot whitespace-nowrap red" style="margin-left: 12px;"><span>CRM: 未推送</span></span>';
-	}
-	
-	// 在页面顶部的工具栏区域添加（面包屑旁边）
-	var $pageHead = $('.page-head');
-	if ($pageHead.length) {
-		var $target = $pageHead.find('.page-title').length ? $pageHead.find('.page-title') : $pageHead;
-		$target.append(statusHtml);
-	}
+	);
 }
 
-function add_push_to_crm_button(frm) {
-	// 只在已提交的文档中显示按钮
-	if (frm.doc.docstatus === 1) {
-		// 检查是否已经添加过按钮，避免重复添加
-		if (!frm.custom_buttons["推送至CRM"]) {
-			frm.add_custom_button(__("推送至CRM"), function() {
-				push_sales_order_to_crm(frm);
-			}, __("CRM操作"));
-			
-			// 立即应用样式到 CRM操作 分组按钮
-			apply_crm_button_style();
-		}
-	}
-}
-
-function apply_crm_button_style() {
-	// 用最小延迟确保 DOM 已更新（使用 requestAnimationFrame 而不是固定延迟）
-	requestAnimationFrame(function() {
-		let $btns = $('.page-head').find('button');
-		
-		$btns.each(function() {
-			const $this = $(this);
-			const text = $this.text().trim();
-			
-			// 找到"CRM操作"分组按钮并应用黑色背景
-			if (text === 'CRM操作') {
-				$this.attr('style', 'background-color: #1f2937 !important; border-color: #1f2937 !important; color: #ffffff !important;')
-					.removeClass('btn-default btn-light')
-					.addClass('btn-primary');
-			}
-		});
-	});
-}
-
-function push_sales_order_to_crm(frm) {
-	// 获取按钮并禁用，防止重复点击
-	const $btn = $('[data-label="推送至CRM"]');
-	$btn.prop("disabled", true);
-	
+function confirm_deposit_and_push_to_mes(frm) {
 	frappe.call({
-		method: "crm_integration.crm_integration.sales_order.push_to_crm",
+		method: "crm_integration.crm_integration.sales_order.confirm_deposit_and_push_to_mes",
 		args: {
 			sales_order_name: frm.doc.name
 		},
+		freeze: true,
+		freeze_message: __("正在确认定金并推送至MES..."),
 		callback: function(r) {
-			// 重新启用按钮
-			$btn.prop("disabled", false);
-			
-			if (r.message) {
-				frappe.msgprint({
-					title: __("成功"),
-					indicator: "green",
-					message: r.message.message
-				});
-				
-				// 刷新表单，更新 CRM Status 显示
+			if (r.message && r.message.status === "success") {
+				frappe.show_alert({ message: r.message.message, indicator: "green" });
 				frm.reload_doc();
-				frm.refresh_fields();
 			}
-		},
-		error: function(err) {
-			// 重新启用按钮
-			$btn.prop("disabled", false);
-			frappe.msgprint({
-				title: __("错误"),
-				indicator: "red",
-				message: __("推送至CRM失败，请重试")
-			});
 		}
 	});
+}
+
+
+function render_payment_entry_link_in_details(frm) {
+	$(".crm-payment-entry-link-wrapper").remove();
+
+	if (!frm || frm.doctype !== "Sales Order" || !frm.doc || frm.doc.__islocal) {
+		return;
+	}
+
+	const $wrapper = $(`
+		<div class="crm-payment-entry-link-wrapper section-body">
+			<div class="form-column col-sm-12" data-fieldname="crm_payment_entry_link">
+				<form>
+					<div class="frappe-control input-max-width" data-fieldtype="HTML" data-fieldname="crm_payment_entry_link">
+						<div class="form-group horizontal">
+							<div class="clearfix">
+								<label class="control-label" style="padding-right: 5px;">${__("Payment Entry")}</label>
+								<span class="help"></span>
+							</div>
+							<div class="control-input-wrapper">
+								<div class="control-input">
+									<div class="form-links crm-payment-entry-form-links">
+										<div class="document-link" data-doctype="Payment Entry">
+											<div class="document-link-badge" data-doctype="Payment Entry">
+												<a class="badge-link">${__("Payment Entry")}</a>
+												<span class="count hidden" title="${__("Count of linked documents")}"></span>
+											</div>
+											<span class="open-notification hidden" title="${__("Open {0}", [__("Payment Entry")])}"></span>
+											<button type="button" class="btn btn-new btn-secondary btn-xs icon-btn hidden" data-doctype="Payment Entry">
+												<svg class="icon icon-sm"><use href="#icon-add"></use></svg>
+											</button>
+										</div>
+									</div>
+								</div>
+								<div class="help-box small text-extra-muted hide"></div>
+							</div>
+						</div>
+						<span class="tooltip-content">${__("Payment Entry")}</span>
+					</div>
+				</form>
+			</div>
+		</div>
+	`);
+
+	const $customer_section = frm.fields_dict.customer_section
+		? $(frm.fields_dict.customer_section.wrapper)
+		: $();
+
+	if ($customer_section.length) {
+		$customer_section.after($wrapper);
+	} else {
+		$(frm.wrapper).find(".form-layout").first().prepend($wrapper);
+	}
+
+	$wrapper.find(".badge-link, .open-notification").on("click", function() {
+		open_payment_entry_list(frm, $(this).hasClass("open-notification"));
+	});
+
+	$wrapper.find(".btn-new").on("click", function(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		make_payment_entry_from_sales_order(frm);
+	});
+
+	schedule_payment_entry_new_button_visibility(frm, $wrapper);
+	refresh_payment_entry_link_count(frm);
+}
+
+function schedule_payment_entry_new_button_visibility(frm, $wrapper) {
+	update_payment_entry_new_button_visibility(frm, $wrapper);
+	requestAnimationFrame(function() {
+		update_payment_entry_new_button_visibility(frm, $wrapper);
+	});
+	setTimeout(function() {
+		update_payment_entry_new_button_visibility(frm, $wrapper);
+	}, 300);
+}
+
+function update_payment_entry_new_button_visibility(frm, $wrapper) {
+	const can_create_payment_entry = frm.doc.docstatus === 1 && frm.can_create("Payment Entry");
+	$wrapper.find(".btn-new").toggleClass("hidden", !can_create_payment_entry);
+}
+
+function make_payment_entry_from_sales_order(frm) {
+	let via_journal_entry = frm.doc.__onload && frm.doc.__onload.make_payment_via_journal_entry;
+	if (has_discount_in_schedule(frm) && !via_journal_entry) {
+		prompt_user_for_reference_date(frm);
+	} else {
+		make_mapped_payment_entry(frm);
+	}
+}
+
+function make_mapped_payment_entry(frm, args) {
+	args = args || { dt: frm.doc.doctype, dn: frm.doc.name };
+	return frappe.call({
+		method: get_method_for_payment(frm),
+		args: args,
+		callback: function(r) {
+			var doclist = frappe.model.sync(r.message);
+			remember_payment_entry_source_sales_order(frm, doclist[0].name);
+			frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
+		}
+	});
+}
+
+function remember_payment_entry_source_sales_order(frm, payment_entry_name) {
+	if (!window.sessionStorage || !payment_entry_name) {
+		return;
+	}
+
+	sessionStorage.setItem(
+		"crm_integration_payment_entry_source",
+		JSON.stringify({
+			payment_entry: payment_entry_name,
+			sales_order: frm.doc.name
+		})
+	);
+}
+
+function prompt_user_for_reference_date(frm) {
+	frappe.prompt(
+		{
+			label: __("Cheque/Reference Date"),
+			fieldname: "reference_date",
+			fieldtype: "Date",
+			reqd: 1
+		},
+		(values) => {
+			let args = {
+				dt: frm.doc.doctype,
+				dn: frm.doc.name,
+				reference_date: values.reference_date
+			};
+			make_mapped_payment_entry(frm, args);
+		},
+		__("Reference Date for Early Payment Discount"),
+		__("Continue")
+	);
+}
+
+function has_discount_in_schedule(frm) {
+	let is_eligible = ["Sales Order", "Sales Invoice", "Purchase Order", "Purchase Invoice"].includes(
+		frm.doctype
+	);
+	let has_payment_schedule = frm.doc.payment_schedule && frm.doc.payment_schedule.length;
+	if (!is_eligible || !has_payment_schedule) return false;
+
+	let has_discount = frm.doc.payment_schedule.some((row) => row.discount);
+	return has_discount;
+}
+
+function get_method_for_payment(frm) {
+	let method = "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry";
+	if (frm.doc.__onload && frm.doc.__onload.make_payment_via_journal_entry) {
+		method = "erpnext.accounts.doctype.journal_entry.journal_entry.get_payment_entry_against_order";
+	}
+
+	return method;
+}
+
+function refresh_payment_entry_link_count(frm) {
+	const $link = $(".crm-payment-entry-link-wrapper .document-link[data-doctype='Payment Entry']");
+	if (!frm || !frm.doc || frm.doc.__islocal || !$link.length) {
+		return;
+	}
+
+	const dashboard_count = get_payment_entry_count_from_dashboard(frm);
+	if (dashboard_count) {
+		update_payment_entry_link_badges($link, dashboard_count.open_count, dashboard_count.count);
+		return;
+	}
+
+	const method = frm.dashboard && frm.dashboard.data && frm.dashboard.data.method
+		? frm.dashboard.data.method
+		: "frappe.desk.notifications.get_open_count";
+
+	frappe.call({
+		type: "GET",
+		method: method,
+		args: {
+			doctype: frm.doctype,
+			name: frm.docname,
+			items: ["Payment Entry"]
+		},
+		callback: function(r) {
+			const count = get_payment_entry_count_from_response(r.message);
+			update_payment_entry_link_badges($link, count.open_count, count.count);
+		}
+	});
+}
+
+function get_payment_entry_count_from_dashboard(frm) {
+	if (!frm.dashboard_data || !frm.dashboard_data.count) {
+		return null;
+	}
+
+	return get_payment_entry_count_from_response(frm.dashboard_data);
+}
+
+function get_payment_entry_count_from_response(data) {
+	const empty_count = { open_count: 0, count: 0 };
+	if (!data || !data.count) {
+		return empty_count;
+	}
+
+	const linked_docs = []
+		.concat(data.count.external_links_found || [])
+		.concat(data.count.internal_links_found || []);
+
+	return linked_docs.find((d) => d.doctype === "Payment Entry") || empty_count;
+}
+
+function update_payment_entry_link_badges($link, open_count, count) {
+	const display_count = cint(count);
+	const display_open_count = cint(open_count);
+
+	$link
+		.find(".count")
+		.toggleClass("hidden", !display_count)
+		.text(display_count > 99 ? "99+" : display_count);
+
+	$link
+		.find(".open-notification")
+		.toggleClass("hidden", !display_open_count)
+		.html(display_open_count > 99 ? "99+" : display_open_count);
+}
+
+function open_payment_entry_list(frm, show_open) {
+	if (frm.dashboard && frm.dashboard.open_document_list) {
+		frm.dashboard.open_document_list(
+			$(".crm-payment-entry-link-wrapper .document-link[data-doctype='Payment Entry']"),
+			show_open
+		);
+		return;
+	}
+
+	frappe.route_options = {
+		reference_name: frm.doc.name
+	};
+	frappe.set_route("List", "Payment Entry", "List");
 }
