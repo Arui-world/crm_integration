@@ -4,6 +4,8 @@ from frappe import _
 from frappe.utils import cint, flt, now
 from frappe.utils.data import get_datetime
 
+from crm_integration.crm_integration.integration_log import create_crm_log, update_crm_log
+
 
 PENDING_CONFIRMATION = "Pending Confirmation"
 REJECTED = "Rejected"
@@ -15,6 +17,11 @@ DELIVERABLE = "Deliverable"
 CRM_STATUS_API_TIMEOUT = 15
 CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION = "CONFIRMED_DEPOSIT_PUSH_PRODUCTION"
 CRM_STATUS_FINANCE_REJECTED = "FINANCE_REJECTED"
+
+CRM_STATUS_EVENTS = {
+	CRM_STATUS_FINANCE_REJECTED: "Sales Order Rejected",
+	CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION: "Confirmed Deposit Push Production",
+}
 
 
 def set_process_status(sales_order, process_status, status=None):
@@ -43,6 +50,10 @@ def get_crm_status_api_verify_ssl():
 	return cint(frappe.conf.get("crm_status_api_verify_ssl", 1)) == 1
 
 
+def get_crm_status_event(external_status):
+	return CRM_STATUS_EVENTS.get(external_status) or "Sales Order Status Push"
+
+
 def push_sales_order_status_to_crm(sales_order, external_status):
 	external_order_id = sales_order.get("custom_crm_order_no") or sales_order.name
 	if not external_order_id:
@@ -56,31 +67,59 @@ def push_sales_order_status_to_crm(sales_order, external_status):
 		"traceId": make_crm_trace_id(sales_order.name, external_status),
 		"attachments": [],
 	}
+	request_url = get_crm_status_api_url()
 	headers = {
 		"Content-Type": "application/json",
 		"X-API-Key": get_crm_status_api_key(),
 	}
+	crm_log = create_crm_log(
+		direction="Outbound",
+		event=get_crm_status_event(external_status),
+		status="Pending",
+		reference_doctype="Sales Order",
+		reference_name=sales_order.name,
+		source="ERPNext",
+		request_url=request_url,
+		request_payload=payload,
+		trace_id=payload["traceId"],
+		external_status=external_status,
+	)
 
 	try:
 		response = requests.post(
-			get_crm_status_api_url(),
+			request_url,
 			json=payload,
 			headers=headers,
 			timeout=CRM_STATUS_API_TIMEOUT,
 			verify=get_crm_status_api_verify_ssl(),
 		)
+		response_payload = parse_crm_response(response)
 		response.raise_for_status()
 	except requests.RequestException as exc:
+		response = getattr(exc, "response", None)
+		update_crm_log(
+			crm_log,
+			status="Failed",
+			response_payload=parse_crm_response(response) if response else None,
+			error_message=frappe.get_traceback(),
+			http_status_code=getattr(response, "status_code", None),
+		)
 		frappe.log_error(
 			title=_("CRM 状态推送失败"),
 			message=frappe.get_traceback(),
 		)
 		frappe.throw(_("CRM 状态推送失败：{0}").format(str(exc)))
 
+	update_crm_log(
+		crm_log,
+		status="Success",
+		response_payload=response_payload,
+		http_status_code=response.status_code,
+	)
 	frappe.logger().info(
 		f"Pushed Sales Order {sales_order.name} status {external_status} to CRM with traceId {payload['traceId']}"
 	)
-	return parse_crm_response(response)
+	return response_payload
 
 
 def make_crm_trace_id(sales_order_name, external_status):
@@ -89,9 +128,15 @@ def make_crm_trace_id(sales_order_name, external_status):
 
 
 def parse_crm_response(response):
+	if not response:
+		return None
+
 	content_type = response.headers.get("content-type") or ""
 	if content_type.startswith("application/json"):
-		return response.json()
+		try:
+			return response.json()
+		except ValueError:
+			return response.text
 	return response.text
 
 

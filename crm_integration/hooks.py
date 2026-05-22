@@ -155,6 +155,7 @@ doctype_css = {"Sales Order": "public/css/sales_order.css"}
 
 doc_events = {
 	"Sales Order": {
+		"after_insert": "crm_integration.crm_integration.integration_log.log_inbound_sales_order",
 		"before_submit": "crm_integration.crm_integration.sales_order.prevent_rejected_sales_order_submit",
 		"on_submit": "crm_integration.crm_integration.sales_order.set_pending_deposit_confirmation_on_submit",
 	},
