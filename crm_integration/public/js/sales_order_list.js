@@ -17,6 +17,7 @@ frappe.listview_settings["Sales Order"].formatters = {
 			"Pending Final Payment": "yellow",
 			"Deliverable": "blue",
 			"Completed": "green",
+			"Closed": "green",
 		};
 
 		return `<span class="indicator-pill ${colors[status] || "gray"} no-indicator-dot">${__(status)}</span>`;

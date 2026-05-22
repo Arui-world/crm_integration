@@ -13,6 +13,7 @@ PENDING_DEPOSIT_CONFIRMATION = "Pending Deposit Confirmation"
 PENDING_PRODUCTION = "Pending Production"
 PENDING_FINAL_PAYMENT = "Pending Final Payment"
 DELIVERABLE = "Deliverable"
+CLOSED = "Closed"
 
 CRM_STATUS_API_TIMEOUT = 15
 CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION = "CONFIRMED_DEPOSIT_PUSH_PRODUCTION"
@@ -30,6 +31,46 @@ def set_process_status(sales_order, process_status, status=None):
 	if status:
 		sales_order.db_set("status", status, update_modified=True)
 	sales_order.notify_update()
+
+
+def sync_closed_process_status(sales_order_name, status):
+	"""Keep the custom process status aligned when ERPNext closes a Sales Order."""
+	if status != CLOSED:
+		return
+
+	frappe.db.set_value(
+		"Sales Order",
+		sales_order_name,
+		"custom_process_status",
+		CLOSED,
+		update_modified=True,
+	)
+
+
+@frappe.whitelist()
+def update_status(status, name):
+	"""Wrap ERPNext Sales Order status update so native Close also closes our flow."""
+	from erpnext.selling.doctype.sales_order.sales_order import update_status as erpnext_update_status
+
+	erpnext_update_status(status, name)
+	sync_closed_process_status(name, status)
+
+
+@frappe.whitelist()
+def close_or_unclose_sales_orders(names, status):
+	"""Wrap ERPNext bulk close so list actions also update the custom flow status."""
+	from erpnext.selling.doctype.sales_order.sales_order import (
+		close_or_unclose_sales_orders as erpnext_close_or_unclose_sales_orders,
+	)
+
+	erpnext_close_or_unclose_sales_orders(names, status)
+
+	if status != CLOSED:
+		return
+
+	for name in frappe.parse_json(names):
+		if frappe.db.get_value("Sales Order", name, "status") == CLOSED:
+			sync_closed_process_status(name, status)
 
 
 def get_crm_status_api_url():

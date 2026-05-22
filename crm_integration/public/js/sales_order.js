@@ -291,7 +291,8 @@ function get_process_status_color(process_status) {
 		"Pending Production": "blue",
 		"Pending Final Payment": "yellow",
 		"Deliverable": "blue",
-		"Completed": "green"
+		"Completed": "green",
+		"Closed": "green",
 	};
 
 	return color_map[process_status] || "gray";
