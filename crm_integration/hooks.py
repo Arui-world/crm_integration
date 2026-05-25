@@ -212,8 +212,6 @@ override_whitelisted_methods = {
 	"erpnext.manufacturing.doctype.work_order.work_order.query_sales_order": "crm_integration.crm_integration.work_order.query_sales_order",
 	"erpnext.manufacturing.doctype.production_plan.production_plan.sales_order_query": "crm_integration.crm_integration.production_plan.sales_order_query",
 	"erpnext.selling.doctype.sales_order.sales_order.make_production_plan": "crm_integration.crm_integration.production_plan.make_production_plan",
-	"erpnext.selling.doctype.sales_order.sales_order.update_status": "crm_integration.crm_integration.sales_order.update_status",
-	"erpnext.selling.doctype.sales_order.sales_order.close_or_unclose_sales_orders": "crm_integration.crm_integration.sales_order.close_or_unclose_sales_orders",
 }
 #
 # each overriding function accepts a `data` argument;

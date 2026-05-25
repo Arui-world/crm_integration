@@ -219,6 +219,10 @@ function add_production_flow_buttons(frm) {
 		return;
 	}
 
+	if (frm.doc.status === "Closed") {
+		return;
+	}
+
 	const process_status = frm.doc.custom_process_status;
 
 	if (frm.doc.docstatus === 0 && process_status === "Pending Confirmation") {
