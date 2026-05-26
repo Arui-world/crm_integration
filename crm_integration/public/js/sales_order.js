@@ -302,6 +302,15 @@ function get_process_status_color(process_status) {
 	return color_map[process_status] || "gray";
 }
 
+function get_current_remark(frm) {
+	const remark_field = frm.get_field && frm.get_field("custom_remark");
+	if (remark_field && remark_field.get_value) {
+		return remark_field.get_value() || "";
+	}
+
+	return frm.doc.custom_remark || "";
+}
+
 function reject_sales_order(frm) {
 	frappe.confirm(
 		__("确认驳回此销售订单？"),
@@ -309,7 +318,8 @@ function reject_sales_order(frm) {
 			frappe.call({
 				method: "crm_integration.crm_integration.sales_order.reject_sales_order",
 				args: {
-					sales_order_name: frm.doc.name
+					sales_order_name: frm.doc.name,
+					remark: get_current_remark(frm)
 				},
 				freeze: true,
 				freeze_message: __("正在驳回销售订单..."),

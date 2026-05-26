@@ -1,5 +1,6 @@
 import frappe
 import requests
+from requests.exceptions import RequestException
 from frappe import _
 from frappe.utils import cint, flt, now
 from frappe.utils.data import get_datetime
@@ -16,6 +17,7 @@ DELIVERABLE = "Deliverable"
 CLOSED = "Closed"
 
 CRM_STATUS_API_TIMEOUT = 15
+MES_SALES_ORDER_PUSH_EVENT = "sales_order.updated"
 CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION = "CONFIRMED_DEPOSIT_PUSH_PRODUCTION"
 CRM_STATUS_FINANCE_REJECTED = "FINANCE_REJECTED"
 
@@ -60,8 +62,8 @@ def get_crm_status_event(external_status):
 	return CRM_STATUS_EVENTS.get(external_status) or "Sales Order Status Push"
 
 
-def push_sales_order_status_to_crm(sales_order, external_status):
-	external_order_id = sales_order.get("custom_crm_order_no") or sales_order.name
+def push_sales_order_status_to_crm(sales_order, external_status, remark=None):
+	external_order_id = sales_order.get("custom_crm_order_no")
 	if not external_order_id:
 		frappe.throw(_("缺少 CRM 订单编号，无法推送状态到 CRM。"))
 
@@ -69,7 +71,7 @@ def push_sales_order_status_to_crm(sales_order, external_status):
 		"sourceSystem": "ERP",
 		"externalStatus": external_status,
 		"externalOrderId": external_order_id,
-		"remark": sales_order.get("custom_remark") or "",
+		"remark": remark if remark is not None else sales_order.get("custom_remark") or "",
 		"traceId": make_crm_trace_id(sales_order.name, external_status),
 		"attachments": [],
 	}
@@ -146,8 +148,171 @@ def parse_crm_response(response):
 	return response.text
 
 
+def get_mes_sales_order_push_url():
+	url = frappe.conf.get("mes_sales_order_push_url")
+	if not url:
+		frappe.throw(_("缺少 MES 销售订单推送接口配置：mes_sales_order_push_url"))
+	return url
+
+
+def get_mes_sales_order_push_authorization():
+	authorization = frappe.conf.get("mes_sales_order_push_authorization")
+	if not authorization:
+		frappe.throw(_("缺少 MES 销售订单推送认证配置：mes_sales_order_push_authorization"))
+	return authorization
+
+
+def push_sales_order_to_mes(sales_order):
+	payload = build_mes_sales_order_payload(sales_order)
+	request_url = get_mes_sales_order_push_url()
+	headers = {
+		"Content-Type": "application/json",
+		"Authorization": get_mes_sales_order_push_authorization(),
+	}
+	crm_log = create_crm_log(
+		direction="Outbound",
+		event="Sales Order Push To MES",
+		status="Pending",
+		reference_doctype="Sales Order",
+		reference_name=sales_order.name,
+		source="ERPNext",
+		request_url=request_url,
+		request_payload=payload,
+	)
+
+	try:
+		response = requests.post(
+			request_url,
+			json=payload,
+			headers=headers,
+			timeout=flt(frappe.conf.get("mes_request_timeout") or 15),
+		)
+		response_payload = parse_crm_response(response)
+		response.raise_for_status()
+		validate_mes_sales_order_response(response_payload)
+	except RequestException as exc:
+		response = getattr(exc, "response", None)
+		update_crm_log(
+			crm_log,
+			status="Failed",
+			response_payload=parse_crm_response(response) if response else None,
+			error_message=frappe.get_traceback(),
+			http_status_code=getattr(response, "status_code", None),
+		)
+		frappe.log_error(title=_("MES 销售订单推送失败"), message=frappe.get_traceback())
+		frappe.throw(_("MES 销售订单推送失败：{0}").format(str(exc)))
+	except Exception:
+		update_crm_log(
+			crm_log,
+			status="Failed",
+			response_payload=locals().get("response_payload"),
+			error_message=frappe.get_traceback(),
+			http_status_code=getattr(locals().get("response"), "status_code", None),
+		)
+		frappe.log_error(title=_("MES 销售订单推送失败"), message=frappe.get_traceback())
+		raise
+
+	update_crm_log(
+		crm_log,
+		status="Success",
+		response_payload=response_payload,
+		http_status_code=response.status_code,
+	)
+	return response_payload
+
+
+def build_mes_sales_order_payload(sales_order):
+	items = build_mes_sales_order_items(sales_order)
+	if not items:
+		frappe.throw(_("销售订单缺少可推送到 MES 的明细行。"))
+
+	data = compact_dict({
+		"name": sales_order.name,
+		"customer": sales_order.get("customer"),
+		"company": sales_order.get("company"),
+		"transaction_date": format_date_value(sales_order.get("transaction_date")),
+		"delivery_date": format_date_value(sales_order.get("delivery_date")),
+		"status": sales_order.get("status"),
+		"docstatus": 1,
+		"total_qty": flt(sales_order.get("total_qty")),
+		"total": flt(sales_order.get("total")),
+		"grand_total": flt(sales_order.get("grand_total")),
+		"owner": sales_order.get("owner"),
+		"odt": sales_order.get("custom_odt"),
+		"product_series_id": get_product_series_id(items),
+		"modified": get_datetime(sales_order.modified).isoformat() if sales_order.get("modified") else None,
+		"items": items,
+	})
+
+	return compact_dict({
+		"event": MES_SALES_ORDER_PUSH_EVENT,
+		"doc_type": "Sales Order",
+		"doc_name": sales_order.name,
+		"data": data,
+		"triggered_by": "erp_confirm_deposit",
+		"timestamp": get_datetime().isoformat(),
+	})
+
+
+def build_mes_sales_order_items(sales_order):
+	items = []
+	for row in sales_order.get("items", []):
+		if not row.get("item_code") or flt(row.get("qty")) <= 0:
+			continue
+
+		items.append(compact_dict({
+			"name": row.get("name"),
+			"idx": row.get("idx"),
+			"item_code": row.get("item_code"),
+			"item_name": row.get("item_name"),
+			"description": row.get("description"),
+			"color": row.get("custom_specifications"),
+			"qty": flt(row.get("qty")),
+			"uom": row.get("uom"),
+			"rate": flt(row.get("rate")),
+			"amount": flt(row.get("amount")),
+			"delivery_date": format_date_value(row.get("delivery_date")),
+			"warehouse": get_item_source_warehouse(row, sales_order),
+		}))
+	return items
+
+
+def get_item_source_warehouse(row, sales_order):
+	return row.get("warehouse") or sales_order.get("set_warehouse")
+
+
+def get_product_series_id(items):
+	for item in items:
+		item_code = item.get("item_code")
+		if item_code:
+			return item_code[:7]
+	return None
+
+
+def validate_mes_sales_order_response(response_payload):
+	if not isinstance(response_payload, dict):
+		frappe.throw(_("MES 销售订单推送接口响应格式异常。"))
+
+	if not response_payload.get("success"):
+		message = response_payload.get("message") or _("MES 销售订单推送失败。")
+		error_code = response_payload.get("errorCode")
+		if error_code:
+			message = _("{0}，错误码：{1}").format(message, error_code)
+		frappe.throw(message)
+
+
+def format_date_value(value):
+	if not value:
+		return None
+	return frappe.utils.getdate(value).isoformat()
+
+
+def compact_dict(data):
+	return {key: value for key, value in data.items() if value not in (None, "", [])}
+
+
 @frappe.whitelist()
-def reject_sales_order(sales_order_name):
+def reject_sales_order(sales_order_name, remark=None):
 	"""Reject a CRM-created Sales Order while it is waiting for ERP confirmation."""
 	sales_order = frappe.get_doc("Sales Order", sales_order_name)
 	assert_sales_order_not_closed(sales_order)
@@ -158,7 +323,7 @@ def reject_sales_order(sales_order_name):
 	if sales_order.get("custom_process_status") != PENDING_CONFIRMATION:
 		frappe.throw(_("只有待确认的销售订单可以驳回。"))
 
-	push_sales_order_status_to_crm(sales_order, CRM_STATUS_FINANCE_REJECTED)
+	push_sales_order_status_to_crm(sales_order, CRM_STATUS_FINANCE_REJECTED, remark=remark)
 
 	set_process_status(sales_order, REJECTED, status="Cancelled")
 	frappe.logger().info(f"Sales Order {sales_order_name} rejected from production flow")
@@ -189,7 +354,7 @@ def prevent_rejected_sales_order_submit(doc, method=None):
 
 @frappe.whitelist()
 def confirm_deposit_and_push_to_mes(sales_order_name):
-	"""Simulate deposit confirmation and MES push for now."""
+	"""Confirm deposit, notify CRM, and push the Sales Order to MES."""
 	sales_order = frappe.get_doc("Sales Order", sales_order_name)
 	assert_sales_order_not_closed(sales_order)
 
@@ -200,9 +365,7 @@ def confirm_deposit_and_push_to_mes(sales_order_name):
 		frappe.throw(_("只有待确认定金的销售订单可以推送至MES。"))
 
 	push_sales_order_status_to_crm(sales_order, CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION)
-
-	# MES push is simulated as successful for now.
-	frappe.logger().info(f"Simulated MES push for Sales Order {sales_order_name}")
+	push_sales_order_to_mes(sales_order)
 	set_process_status(sales_order, PENDING_PRODUCTION)
 
 	return {
