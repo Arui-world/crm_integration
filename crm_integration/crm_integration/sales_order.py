@@ -17,13 +17,23 @@ DELIVERABLE = "Deliverable"
 CLOSED = "Closed"
 
 CRM_STATUS_API_TIMEOUT = 15
-MES_SALES_ORDER_PUSH_EVENT = "sales_order.updated"
+MES_SALES_ORDER_PUSH_EVENT = "sales_order.created"
 CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION = "CONFIRMED_DEPOSIT_PUSH_PRODUCTION"
 CRM_STATUS_FINANCE_REJECTED = "FINANCE_REJECTED"
 
 CRM_STATUS_EVENTS = {
 	CRM_STATUS_FINANCE_REJECTED: "Sales Order Rejected",
 	CRM_STATUS_CONFIRMED_DEPOSIT_PUSH_PRODUCTION: "Confirmed Deposit Push Production",
+}
+
+PRODUCT_SERIES_NAME_MAP = {
+	"NBA": "亮甲2.0",
+	"NDN": "ALTERNA",
+	"NHA": "超级队长",
+	"NFA": "骑士",
+	"NFB": "骑士2.0",
+	"NWV": "薇武士",
+	"NBD": "圣殿",
 }
 
 
@@ -222,12 +232,18 @@ def push_sales_order_to_mes(sales_order):
 
 
 def build_mes_sales_order_payload(sales_order):
+	crm_order_no = sales_order.get("custom_crm_order_no")
+	if not crm_order_no:
+		frappe.throw(_("缺少 CRM 订单编号，无法推送销售订单到 MES。"))
+
 	items = build_mes_sales_order_items(sales_order)
 	if not items:
 		frappe.throw(_("销售订单缺少可推送到 MES 的明细行。"))
 
+	product_series_id = get_product_series_id(items)
+
 	data = compact_dict({
-		"name": sales_order.name,
+		"name": crm_order_no,
 		"customer": sales_order.get("customer"),
 		"company": sales_order.get("company"),
 		"transaction_date": format_date_value(sales_order.get("transaction_date")),
@@ -239,7 +255,8 @@ def build_mes_sales_order_payload(sales_order):
 		"grand_total": flt(sales_order.get("grand_total")),
 		"owner": sales_order.get("owner"),
 		"odt": sales_order.get("custom_odt"),
-		"product_series_id": get_product_series_id(items),
+		"product_series_id": product_series_id,
+		"product_name": get_product_series_name(product_series_id),
 		"modified": get_datetime(sales_order.modified).isoformat() if sales_order.get("modified") else None,
 		"items": items,
 	})
@@ -247,7 +264,7 @@ def build_mes_sales_order_payload(sales_order):
 	return compact_dict({
 		"event": MES_SALES_ORDER_PUSH_EVENT,
 		"doc_type": "Sales Order",
-		"doc_name": sales_order.name,
+		"doc_name": crm_order_no,
 		"data": data,
 		"triggered_by": "erp_confirm_deposit",
 		"timestamp": get_datetime().isoformat(),
@@ -287,6 +304,14 @@ def get_product_series_id(items):
 		if item_code:
 			return item_code[:7]
 	return None
+
+
+
+
+def get_product_series_name(product_series_id):
+	if not product_series_id:
+		return None
+	return PRODUCT_SERIES_NAME_MAP.get(product_series_id[:3])
 
 
 def validate_mes_sales_order_response(response_payload):
