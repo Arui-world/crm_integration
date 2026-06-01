@@ -243,8 +243,8 @@ def build_mes_sales_order_payload(sales_order):
 	product_series_id = get_product_series_id(items)
 
 	data = compact_dict({
-		"name": crm_order_no,
-		"customer": sales_order.get("customer"),
+		"name": sales_order.name,
+		"customer_name": sales_order.get("customer"),
 		"company": sales_order.get("company"),
 		"transaction_date": format_date_value(sales_order.get("transaction_date")),
 		"delivery_date": format_date_value(sales_order.get("delivery_date")),
@@ -254,7 +254,8 @@ def build_mes_sales_order_payload(sales_order):
 		"total": flt(sales_order.get("total")),
 		"grand_total": flt(sales_order.get("grand_total")),
 		"owner": sales_order.get("owner"),
-		"odt": sales_order.get("custom_odt"),
+		"custom_odt": sales_order.get("custom_odt"),
+		"custom_crm_order_no": sales_order.get("custom_crm_order_no"),
 		"product_series_id": product_series_id,
 		"product_name": get_product_series_name(product_series_id),
 		"modified": get_datetime(sales_order.modified).isoformat() if sales_order.get("modified") else None,
@@ -264,7 +265,7 @@ def build_mes_sales_order_payload(sales_order):
 	return compact_dict({
 		"event": MES_SALES_ORDER_PUSH_EVENT,
 		"doc_type": "Sales Order",
-		"doc_name": crm_order_no,
+		"doc_name": sales_order.name,
 		"data": data,
 		"triggered_by": "erp_confirm_deposit",
 		"timestamp": get_datetime().isoformat(),
