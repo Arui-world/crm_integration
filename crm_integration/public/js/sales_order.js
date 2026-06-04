@@ -249,8 +249,11 @@ function add_production_flow_buttons(frm) {
 
 function apply_primary_action_style(label) {
 	requestAnimationFrame(function() {
-		const encoded_label = encodeURIComponent(label);
-		const $button = $(`.page-actions button[data-label="${encoded_label}"]`);
+		const labels = [...new Set([label, __(label)])];
+		const selector = labels
+			.map((button_label) => `.page-actions button[data-label="${encodeURIComponent(button_label)}"]`)
+			.join(", ");
+		const $button = $(selector);
 
 		$button
 			.removeClass("btn-default btn-secondary btn-xs")

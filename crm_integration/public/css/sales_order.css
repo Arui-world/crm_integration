@@ -10,3 +10,15 @@
 	margin-bottom: 0;
 	max-width: 250px;
 }
+
+.page-title .process-status-badge {
+	display: inline-flex;
+	max-width: min(180px, 32vw);
+	vertical-align: middle;
+}
+
+.page-title .process-status-badge span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
