@@ -339,25 +339,28 @@ def compact_dict(data):
 
 @frappe.whitelist()
 def reject_sales_order(sales_order_name, remark=None):
-	"""Reject a CRM-created Sales Order while it is waiting for ERP confirmation."""
+	"""Reject and cancel a submitted Sales Order while it is waiting for deposit confirmation."""
 	sales_order = frappe.get_doc("Sales Order", sales_order_name)
 	assert_sales_order_not_closed(sales_order)
 
-	if sales_order.docstatus != 0:
-		frappe.throw(_("只有草稿销售订单可以驳回。"))
+	if sales_order.docstatus != 1:
+		frappe.throw(_("只有已提交的销售订单可以驳回并取消。"))
 
-	if sales_order.get("custom_process_status") != PENDING_CONFIRMATION:
-		frappe.throw(_("只有待确认的销售订单可以驳回。"))
+	if sales_order.get("custom_process_status") != PENDING_DEPOSIT_CONFIRMATION:
+		frappe.throw(_("只有待确认定金的销售订单可以驳回。"))
 
 	push_sales_order_status_to_crm(sales_order, CRM_STATUS_FINANCE_REJECTED, remark=remark)
-
-	set_process_status(sales_order, REJECTED, status="Cancelled")
-	frappe.logger().info(f"Sales Order {sales_order_name} rejected from production flow")
+	sales_order.cancel()
+	sales_order.db_set("custom_process_status", REJECTED, update_modified=True)
+	sales_order.custom_process_status = REJECTED
+	sales_order.notify_update()
+	frappe.logger().info(f"Sales Order {sales_order_name} rejected and cancelled from production flow")
 
 	return {
 		"status": "success",
-		"message": _("销售订单已驳回。"),
+		"message": _("销售订单已驳回并取消。"),
 		"process_status": REJECTED,
+		"docstatus": sales_order.docstatus,
 		"timestamp": now(),
 	}
 

@@ -225,14 +225,8 @@ function add_production_flow_buttons(frm) {
 
 	const process_status = frm.doc.custom_process_status;
 
-	if (frm.doc.docstatus === 0 && process_status === "Pending Confirmation") {
-		frm.add_custom_button(__("驳回"), function() {
-			reject_sales_order(frm);
-		});
-		apply_primary_action_style("驳回");
-	}
-
-	if (frm.doc.docstatus === 1 && process_status === "Pending Deposit Confirmation") {
+	if (can_replace_cancel_with_reject(frm)) {
+		replace_cancel_button_with_reject(frm);
 		frm.add_custom_button(__("确认定金并推送至MES"), function() {
 			confirm_deposit_and_push_to_mes(frm);
 		});
@@ -259,6 +253,53 @@ function apply_primary_action_style(label) {
 			.removeClass("btn-default btn-secondary btn-xs")
 			.addClass("btn-primary btn-sm primary-action");
 	});
+}
+
+function can_replace_cancel_with_reject(frm) {
+	return Boolean(
+		frm &&
+		frm.doc &&
+		frm.doc.docstatus === 1 &&
+		frm.doc.custom_process_status === "Pending Deposit Confirmation"
+	);
+}
+
+function replace_cancel_button_with_reject(frm) {
+	const replace_button = function() {
+		if (!can_replace_cancel_with_reject(frm)) {
+			return;
+		}
+
+		const cancel_labels = [...new Set(["Cancel", __("Cancel"), "取消", __("取消")])];
+		const selector = cancel_labels
+			.map((label) => `.page-actions button[data-label="${encodeURIComponent(label)}"]`)
+			.join(", ");
+		const $cancel_button = $(selector).filter(":visible").first();
+
+		if (!$cancel_button.length || $cancel_button.data("crmRejectInstalled")) {
+			return;
+		}
+
+		const $reject_button = $cancel_button.clone(false, false);
+		$reject_button
+			.data("crmRejectInstalled", true)
+			.attr("data-label", encodeURIComponent(__("驳回")))
+			.removeClass("btn-default btn-secondary")
+			.addClass("btn-primary primary-action")
+			.text(__("驳回"))
+			.off("click.crmReject")
+			.on("click.crmReject", function(e) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				reject_sales_order(frm);
+			});
+
+		$cancel_button.replaceWith($reject_button);
+	};
+
+	replace_button();
+	requestAnimationFrame(replace_button);
+	setTimeout(replace_button, 300);
 }
 
 function display_process_status(frm) {
