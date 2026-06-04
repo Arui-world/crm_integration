@@ -215,6 +215,8 @@ function show_delivery_note_block_message() {
 }
 
 function add_production_flow_buttons(frm) {
+	cleanup_reject_cancel_button(frm);
+
 	if (!frm || !frm.doc || frm.doc.__islocal) {
 		return;
 	}
@@ -255,6 +257,14 @@ function apply_primary_action_style(label) {
 	});
 }
 
+function cleanup_reject_cancel_button(frm) {
+	if (can_replace_cancel_with_reject(frm)) {
+		return;
+	}
+
+	$(".page-actions .crm-reject-cancel-button").remove();
+}
+
 function can_replace_cancel_with_reject(frm) {
 	return Boolean(
 		frm &&
@@ -284,6 +294,7 @@ function replace_cancel_button_with_reject(frm) {
 		$reject_button
 			.data("crmRejectInstalled", true)
 			.attr("data-label", encodeURIComponent(__("驳回")))
+			.addClass("crm-reject-cancel-button")
 			.removeClass("btn-default btn-secondary")
 			.addClass("btn-primary primary-action")
 			.text(__("驳回"))
