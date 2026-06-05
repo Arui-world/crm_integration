@@ -263,6 +263,9 @@ function cleanup_reject_cancel_button(frm) {
 	}
 
 	$(".page-actions .crm-reject-cancel-button").remove();
+	$(".page-actions .crm-native-cancel-hidden")
+		.removeClass("crm-native-cancel-hidden")
+		.removeClass("hidden hide");
 }
 
 function can_replace_cancel_with_reject(frm) {
@@ -284,19 +287,22 @@ function replace_cancel_button_with_reject(frm) {
 		const selector = cancel_labels
 			.map((label) => `.page-actions button[data-label="${encodeURIComponent(label)}"]`)
 			.join(", ");
-		const $cancel_button = $(selector).filter(":visible").first();
+		const $cancel_button = $(selector).not(".crm-reject-cancel-button").first();
 
-		if (!$cancel_button.length || $cancel_button.data("crmRejectInstalled")) {
+		if (!$cancel_button.length) {
+			return;
+		}
+
+		if ($(".page-actions .crm-reject-cancel-button").length) {
+			$cancel_button.addClass("crm-native-cancel-hidden hidden");
 			return;
 		}
 
 		const $reject_button = $cancel_button.clone(false, false);
 		$reject_button
-			.data("crmRejectInstalled", true)
+			.removeClass("crm-native-cancel-hidden hidden hide btn-default btn-secondary")
+			.addClass("crm-reject-cancel-button btn-primary primary-action")
 			.attr("data-label", encodeURIComponent(__("驳回")))
-			.addClass("crm-reject-cancel-button")
-			.removeClass("btn-default btn-secondary")
-			.addClass("btn-primary primary-action")
 			.text(__("驳回"))
 			.off("click.crmReject")
 			.on("click.crmReject", function(e) {
@@ -305,7 +311,8 @@ function replace_cancel_button_with_reject(frm) {
 				reject_sales_order(frm);
 			});
 
-		$cancel_button.replaceWith($reject_button);
+		$cancel_button.addClass("crm-native-cancel-hidden hidden");
+		$reject_button.insertAfter($cancel_button);
 	};
 
 	replace_button();
@@ -418,25 +425,66 @@ function reconcile_final_payment(frm) {
 }
 
 function confirm_deposit_and_push_to_mes(frm) {
-	frappe.confirm(
-		__("确认定金已到账，并将此销售订单推送至MES开始生产？"),
-		function() {
-			frappe.call({
-				method: "crm_integration.crm_integration.sales_order.confirm_deposit_and_push_to_mes",
-				args: {
-					sales_order_name: frm.doc.name
-				},
-				freeze: true,
-				freeze_message: __("正在确认定金并推送至MES..."),
-				callback: function(r) {
-					if (r.message && r.message.status === "success") {
-						frappe.show_alert({ message: r.message.message, indicator: "green" });
-						frm.reload_doc();
-					}
-				}
-			});
+	get_payment_entry_link_count(frm).then(function(count_info) {
+		show_confirm_deposit_dialog(frm, count_info.count);
+	});
+}
+
+function show_confirm_deposit_dialog(frm, payment_entry_count) {
+	const has_payment_entry = cint(payment_entry_count) > 0;
+	const message = has_payment_entry
+		? __("请确认定金金额：{0}/{1}", [
+			format_sales_order_currency(frm, frm.doc.advance_paid),
+			format_sales_order_currency(frm, frm.doc.grand_total)
+		])
+		: __("确认该客户可以不用支付定金吗？");
+
+	const dialog = new frappe.ui.Dialog({
+		title: __("确认定金并推送至MES"),
+		fields: [
+			{
+				fieldname: "message",
+				fieldtype: "HTML",
+				options: `
+					<div class="crm-confirm-deposit-message">${frappe.utils.escape_html(message)}</div>
+					${has_payment_entry ? "" : `<div style="margin-top: 12px;"><button type="button" class="btn btn-primary btn-sm primary-action crm-add-payment-entry">${__("添加收付款凭证")}</button></div>`}
+				`
+			}
+		],
+		primary_action_label: __("确认"),
+		primary_action: function() {
+			dialog.hide();
+			push_confirm_deposit_to_mes(frm);
 		}
-	);
+	});
+
+	dialog.show();
+	dialog.$wrapper.find(".crm-add-payment-entry").on("click", function(e) {
+		e.preventDefault();
+		dialog.hide();
+		make_payment_entry_from_sales_order(frm);
+	});
+}
+
+function push_confirm_deposit_to_mes(frm) {
+	frappe.call({
+		method: "crm_integration.crm_integration.sales_order.confirm_deposit_and_push_to_mes",
+		args: {
+			sales_order_name: frm.doc.name
+		},
+		freeze: true,
+		freeze_message: __("正在确认定金并推送至MES..."),
+		callback: function(r) {
+			if (r.message && r.message.status === "success") {
+				frappe.show_alert({ message: r.message.message, indicator: "green" });
+				frm.reload_doc();
+			}
+		}
+	});
+}
+
+function format_sales_order_currency(frm, value) {
+	return format_currency(flt(value), frm.doc.currency || frappe.defaults.get_default("currency"));
 }
 
 
@@ -517,7 +565,7 @@ function schedule_payment_entry_new_button_visibility(frm, $wrapper) {
 }
 
 function update_payment_entry_new_button_visibility(frm, $wrapper) {
-	const can_create_payment_entry = frm.doc.docstatus === 1 && frm.can_create("Payment Entry");
+	const can_create_payment_entry = frm.doc.docstatus === 1;
 	$wrapper.find(".btn-new").toggleClass("hidden", !can_create_payment_entry);
 }
 
@@ -604,28 +652,43 @@ function refresh_payment_entry_link_count(frm) {
 		return;
 	}
 
-	const dashboard_count = get_payment_entry_count_from_dashboard(frm);
-	if (dashboard_count) {
-		update_payment_entry_link_badges($link, dashboard_count.open_count, dashboard_count.count);
-		return;
-	}
+	get_payment_entry_link_count(frm).then(function(count) {
+		update_payment_entry_link_badges($link, count.open_count, count.count);
+	});
+}
 
-	const method = frm.dashboard && frm.dashboard.data && frm.dashboard.data.method
-		? frm.dashboard.data.method
-		: "frappe.desk.notifications.get_open_count";
-
-	frappe.call({
-		type: "GET",
-		method: method,
-		args: {
-			doctype: frm.doctype,
-			name: frm.docname,
-			items: ["Payment Entry"]
-		},
-		callback: function(r) {
-			const count = get_payment_entry_count_from_response(r.message);
-			update_payment_entry_link_badges($link, count.open_count, count.count);
+function get_payment_entry_link_count(frm) {
+	return new Promise(function(resolve) {
+		if (!frm || !frm.doc || frm.doc.__islocal) {
+			resolve({ open_count: 0, count: 0 });
+			return;
 		}
+
+		const dashboard_count = get_payment_entry_count_from_dashboard(frm);
+		if (dashboard_count) {
+			resolve(dashboard_count);
+			return;
+		}
+
+		const method = frm.dashboard && frm.dashboard.data && frm.dashboard.data.method
+			? frm.dashboard.data.method
+			: "frappe.desk.notifications.get_open_count";
+
+		frappe.call({
+			type: "GET",
+			method: method,
+			args: {
+				doctype: frm.doctype,
+				name: frm.docname,
+				items: ["Payment Entry"]
+			},
+			callback: function(r) {
+				resolve(get_payment_entry_count_from_response(r.message));
+			},
+			error: function() {
+				resolve({ open_count: 0, count: 0 });
+			}
+		});
 	});
 }
 

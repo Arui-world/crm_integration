@@ -11,13 +11,18 @@
 	max-width: 250px;
 }
 
-.page-title .process-status-badge {
+.page-title .indicator-pill {
 	display: inline-flex;
-	max-width: min(180px, 32vw);
+	max-width: min(120px, 22vw);
 	vertical-align: middle;
 }
 
-.page-title .process-status-badge span {
+.page-title .process-status-badge {
+	margin-left: 6px !important;
+}
+
+.page-title .indicator-pill span,
+.page-title .indicator-pill {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
