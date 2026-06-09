@@ -6,6 +6,7 @@ from frappe.utils import cint, flt, now
 from frappe.utils.data import get_datetime
 
 from crm_integration.crm_integration.integration_log import create_crm_log, update_crm_log
+from mes_integration.mes_integration.integration_log import create_mes_log, update_mes_log
 
 
 PENDING_CONFIRMATION = "Pending Confirmation"
@@ -179,7 +180,7 @@ def push_sales_order_to_mes(sales_order):
 		"Content-Type": "application/json",
 		"Authorization": get_mes_sales_order_push_authorization(),
 	}
-	crm_log = create_crm_log(
+	mes_log = create_mes_log(
 		direction="Outbound",
 		event="Sales Order Push To MES",
 		status="Pending",
@@ -202,8 +203,8 @@ def push_sales_order_to_mes(sales_order):
 		validate_mes_sales_order_response(response_payload)
 	except RequestException as exc:
 		response = getattr(exc, "response", None)
-		update_crm_log(
-			crm_log,
+		update_mes_log(
+			mes_log,
 			status="Failed",
 			response_payload=parse_crm_response(response) if response else None,
 			error_message=frappe.get_traceback(),
@@ -212,8 +213,8 @@ def push_sales_order_to_mes(sales_order):
 		frappe.log_error(title=_("MES 销售订单推送失败"), message=frappe.get_traceback())
 		frappe.throw(_("MES 销售订单推送失败：{0}").format(str(exc)))
 	except Exception:
-		update_crm_log(
-			crm_log,
+		update_mes_log(
+			mes_log,
 			status="Failed",
 			response_payload=locals().get("response_payload"),
 			error_message=frappe.get_traceback(),
@@ -222,8 +223,8 @@ def push_sales_order_to_mes(sales_order):
 		frappe.log_error(title=_("MES 销售订单推送失败"), message=frappe.get_traceback())
 		raise
 
-	update_crm_log(
-		crm_log,
+	update_mes_log(
+		mes_log,
 		status="Success",
 		response_payload=response_payload,
 		http_status_code=response.status_code,
