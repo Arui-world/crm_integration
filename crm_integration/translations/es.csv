@@ -66,3 +66,5 @@ Update Items,Actualizar
 销售订单缺少可推送到 MES 的明细行。,El pedido de venta no tiene líneas disponibles para enviar a MES.
 预付款小于总计，不能放行发货。,El anticipo es menor que el total; no se puede liberar para entrega.
 驳回,Rechazar
+"以下销售订单状态不允许创建或保存销售出库草稿：<br>{0}","Los siguientes pedidos de venta no permiten crear o guardar borradores de nota de entrega:<br>{0}"
+"以下销售订单未放行发货，不能提交销售出库：<br>{0}","Los siguientes pedidos de venta no están liberados para entrega y no pueden enviarse:<br>{0}"
