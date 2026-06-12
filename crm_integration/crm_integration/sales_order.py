@@ -44,6 +44,21 @@ def set_process_status(sales_order, process_status, status=None):
 	if status:
 		sales_order.db_set("status", status, update_modified=True)
 	sales_order.notify_update()
+	update_related_delivery_note_readiness_status(sales_order.name)
+
+
+def update_related_delivery_note_readiness_status(sales_order_name):
+	try:
+		from mes_integration.mes_integration.delivery_note import (
+			update_delivery_readiness_status_for_sales_orders,
+		)
+
+		update_delivery_readiness_status_for_sales_orders([sales_order_name])
+	except Exception:
+		frappe.log_error(
+			title="Failed to update Delivery Note readiness status",
+			message=frappe.get_traceback(),
+		)
 
 
 def assert_sales_order_not_closed(sales_order):
